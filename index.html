@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Contoh Form Input</title>
+</head>
+<body>
+
+  <h2>Form Pendaftaran</h2>
+  <form action="proses.php" method="POST">
+    
+    <!-- Input Nama -->
+    <label for="nama_lengkap">Nama Lengkap:</label><br>
+    <input type="text" id="nama_lengkap" name="nama" required><br><br>
+
+    <!-- Input Email -->
+    <label for="alamat_email">Email:</label><br>
+    <input type="email" id="alamat_email" name="email" required><br><br>
+
+    <!-- Input Password -->
+    <label for="kata_sandi">Password:</label><br>
+    <input type="password" id="kata_sandi" name="password" required><br><br>
+
+    <!-- Tombol Submit -->
+    <button type="submit">Daftar</button>
+
+  </form>
+
+</body>
+</html>
