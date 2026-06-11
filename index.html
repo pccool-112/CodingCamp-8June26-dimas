@@ -1,30 +1,151 @@
 <!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8">
-  <title>Contoh Form Input</title>
-</head>
-<body>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expense &amp; Budget Visualizer</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4" defer></script>
+    <script type="module" src="js/script.js" defer></script>
+  </head>
+  <body>
 
-  <h2>Form Pendaftaran</h2>
-  <form action="proses.php" method="POST">
-    
-    <!-- Input Nama -->
-    <label for="nama_lengkap">Nama Lengkap:</label><br>
-    <input type="text" id="nama_lengkap" name="nama" required><br><br>
+    <header>
+      <h1>Expense &amp; Budget Visualizer</h1>
+      <button
+        id="theme-toggle"
+        type="button"
+        aria-label="Switch to dark theme (currently light theme)"
+      >
+        🌙 Toggle Theme
+      </button>
+    </header>
 
-    <!-- Input Email -->
-    <label for="alamat_email">Email:</label><br>
-    <input type="email" id="alamat_email" name="email" required><br><br>
+    <main>
 
-    <!-- Input Password -->
-    <label for="kata_sandi">Password:</label><br>
-    <input type="password" id="kata_sandi" name="password" required><br><br>
+      <!-- ── Budget Section ────────────────────────────────────────── -->
+      <section id="budget-section" aria-labelledby="budget-heading">
+        <h2 id="budget-heading">Monthly Budget</h2>
+        <form id="budget-form" novalidate>
+          <label for="budget-input">Monthly Budget Amount</label>
+          <input
+            id="budget-input"
+            type="number"
+            name="budget"
+            min="0.01"
+            step="0.01"
+            placeholder="e.g. 1500.00"
+            autocomplete="off"
+          />
+          <output id="budget-error" role="alert" aria-live="polite"></output>
+          <button type="submit">Set Budget</button>
+        </form>
+        <p id="balance-display">Balance: <strong id="balance-amount">$0.00</strong></p>
+      </section>
 
-    <!-- Tombol Submit -->
-    <button type="submit">Daftar</button>
+      <!-- ── Expense Entry Section ─────────────────────────────────── -->
+      <section id="expense-section" aria-labelledby="expense-heading">
+        <h2 id="expense-heading">Add Expense</h2>
+        <form id="expense-form" novalidate>
 
-  </form>
+          <label for="amount-input">Amount</label>
+          <input
+            id="amount-input"
+            type="number"
+            name="amount"
+            min="0.01"
+            step="0.01"
+            placeholder="e.g. 25.50"
+            autocomplete="off"
+          />
+          <output id="amount-error" role="alert" aria-live="polite"></output>
 
-</body>
+          <label for="category-select">Category</label>
+          <select id="category-select" name="category">
+            <option value="" disabled selected>— Select a category —</option>
+            <option value="Food">Food</option>
+            <option value="Transport">Transport</option>
+            <option value="Housing">Housing</option>
+            <option value="Entertainment">Entertainment</option>
+            <option value="Healthcare">Healthcare</option>
+            <option value="Shopping">Shopping</option>
+            <option value="Utilities">Utilities</option>
+            <option value="Education">Education</option>
+            <option value="Other">Other</option>
+          </select>
+          <output id="category-error" role="alert" aria-live="polite"></output>
+
+          <label for="date-input">Date</label>
+          <input
+            id="date-input"
+            type="date"
+            name="date"
+            autocomplete="off"
+          />
+          <output id="date-error" role="alert" aria-live="polite"></output>
+
+          <label for="description-input">Description (optional)</label>
+          <input
+            id="description-input"
+            type="text"
+            name="description"
+            maxlength="255"
+            placeholder="Brief note about this expense"
+            autocomplete="off"
+          />
+
+          <button type="submit">Add Expense</button>
+        </form>
+      </section>
+
+      <!-- ── Chart Section ─────────────────────────────────────────── -->
+      <section id="chart-section" aria-labelledby="chart-heading">
+        <h2 id="chart-heading">Spending by Category</h2>
+        <figure>
+          <canvas id="pie-chart" role="img" aria-label="Pie chart of spending by category"></canvas>
+          <figcaption id="chart-empty-message" hidden>No expense data to display.</figcaption>
+        </figure>
+      </section>
+
+      <!-- ── Custom Category Section ───────────────────────────────── -->
+      <section id="category-section" aria-labelledby="category-heading">
+        <h2 id="category-heading">Manage Categories</h2>
+        <form id="category-form" novalidate>
+          <label for="new-category-input">Category Name</label>
+          <input
+            id="new-category-input"
+            type="text"
+            name="category"
+            maxlength="50"
+            placeholder="e.g. Subscriptions"
+            autocomplete="off"
+          />
+          <output id="category-form-error" role="alert" aria-live="polite"></output>
+          <button type="submit">Add Category</button>
+        </form>
+      </section>
+
+      <!-- ── Transaction History Section ──────────────────────────── -->
+      <section id="history-section" aria-labelledby="history-heading">
+        <h2 id="history-heading">Transaction History</h2>
+        <nav aria-label="Sort transactions">
+          <label for="sort-select">Sort by</label>
+          <select id="sort-select" name="sort">
+            <option value="amount-desc">Amount: High to Low</option>
+            <option value="amount-asc">Amount: Low to High</option>
+            <option value="category-az">Category (A–Z)</option>
+          </select>
+        </nav>
+        <ol id="transaction-list" aria-live="polite" aria-relevant="additions removals">
+          <!-- Transactions rendered here by renderTransactions() -->
+        </ol>
+      </section>
+
+    </main>
+
+    <footer>
+      <p>&copy; <span id="footer-year"></span> Expense &amp; Budget Visualizer. All data stored locally in your browser.</p>
+    </footer>
+
+  </body>
 </html>
