@@ -1009,9 +1009,9 @@ function updateThemeToggleLabel(currentTheme) {
  * @returns {string}
  */
 function formatCurrency(value) {
-  return '$' + value.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+  return 'Rp' + value.toLocaleString('id-ID', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
 }
 
