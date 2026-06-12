@@ -284,8 +284,6 @@ function validateExpense({ amount, category, date, description }, knownCategorie
         errors.amount = `Amount must not exceed ${MAX_AMOUNT.toLocaleString()}.`;
       } else {
         // Rule 4: at most 2 decimal places
-        // Use string inspection on the original trimmed value so that e.g.
-        // "1.000" (three trailing zeros) is correctly caught as > 2 dp.
         const dotIndex = amountStr.indexOf('.');
         if (dotIndex !== -1 && amountStr.length - dotIndex - 1 > 2) {
           errors.amount = 'Amount must not have more than 2 decimal places.';
@@ -311,10 +309,8 @@ function validateExpense({ amount, category, date, description }, knownCategorie
     errors.date = 'Date is required.';
   } else {
     // Rule 8: must not be a future date
-    // Compare at midnight local time to avoid timezone-offset surprises.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    // Append T00:00:00 so the Date constructor treats it as local time, not UTC.
     const inputDate = new Date(date.trim() + 'T00:00:00');
     if (isNaN(inputDate.getTime())) {
       errors.date = 'Date is not a valid date.';
@@ -387,14 +383,9 @@ function validateCategory(name, existingCategories) {
 /**
  * Computes the remaining balance: budget minus the sum of all expense amounts.
  *
- * Uses floating-point-safe arithmetic by rounding the result to 2 decimal
- * places, which prevents cumulative IEEE-754 drift on long expense lists.
- *
  * @param {number}   budget   - The current monthly budget (non-negative number).
  * @param {Array<{amount: number}>} expenses - Array of expense objects.
  * @returns {number} The balance rounded to at most 2 decimal places.
- *
- * Requirements: 1.2, 1.3, 4.2, 6.3
  */
 function computeBalance(budget, expenses) {
   const sum = expenses.reduce((acc, expense) => acc + expense.amount, 0);
@@ -404,15 +395,8 @@ function computeBalance(budget, expenses) {
 /**
  * Aggregates expense amounts by category.
  *
- * Returns a Map where each key is a category name and each value is the
- * total amount spent in that category.  Categories whose total rounds to
- * zero or below are excluded so the Pie_Chart never receives a zero-area
- * segment.
- *
- * @param {Array<{category: string, amount: number}>} expenses - Array of expense objects.
+ * @param {Array<{category: string, amount: number}>} expenses
  * @returns {Map<string, number>} Map from category name to total amount (> 0 only).
- *
- * Requirements: 4.2
  */
 function aggregateByCategory(expenses) {
   const totals = new Map();
@@ -422,7 +406,6 @@ function aggregateByCategory(expenses) {
     totals.set(expense.category, current + expense.amount);
   }
 
-  // Remove any categories whose accumulated total is not positive
   for (const [category, total] of totals) {
     if (total <= 0) {
       totals.delete(category);
@@ -435,22 +418,9 @@ function aggregateByCategory(expenses) {
 /**
  * Returns a new sorted copy of the expenses array according to `sortOrder`.
  *
- * The input array is NEVER mutated — a shallow copy is sorted and returned.
- *
- * Sort orders:
- *  'amount-desc'  — amount descending; ties broken by date descending (most recent first)
- *  'amount-asc'   — amount ascending;  ties broken by date descending (most recent first)
- *  'category-az'  — category name A→Z (case-insensitive); ties broken by date descending
- *
- * For date comparison, ISO 8601 date strings (YYYY-MM-DD) sort correctly as
- * plain strings, but `new Date(a.date) - new Date(b.date)` is used for
- * explicitness and robustness.
- *
  * @param {Array<{amount: number, category: string, date: string}>} expenses
  * @param {'amount-desc'|'amount-asc'|'category-az'} sortOrder
- * @returns {Array<{amount: number, category: string, date: string}>} New sorted array.
- *
- * Requirements: 6.3
+ * @returns {Array} New sorted array.
  */
 function sortExpenses(expenses, sortOrder) {
   const copy = [...expenses];
@@ -460,7 +430,6 @@ function sortExpenses(expenses, sortOrder) {
       case 'amount-asc': {
         const diff = a.amount - b.amount;
         if (diff !== 0) return diff;
-        // Tie-break: date descending (most recent first)
         return new Date(b.date) - new Date(a.date);
       }
 
@@ -469,7 +438,6 @@ function sortExpenses(expenses, sortOrder) {
         const catB = b.category.toLowerCase();
         if (catA < catB) return -1;
         if (catA > catB) return 1;
-        // Tie-break: date descending (most recent first)
         return new Date(b.date) - new Date(a.date);
       }
 
@@ -477,7 +445,6 @@ function sortExpenses(expenses, sortOrder) {
       default: {
         const diff = b.amount - a.amount;
         if (diff !== 0) return diff;
-        // Tie-break: date descending (most recent first)
         return new Date(b.date) - new Date(a.date);
       }
     }
@@ -485,3 +452,674 @@ function sortExpenses(expenses, sortOrder) {
 
   return copy;
 }
+
+/* ============================================================
+   STATE MUTATIONS
+   ============================================================ */
+
+/**
+ * Adds a new expense to AppState and persists to localStorage.
+ * @param {{ id: string, amount: number, category: string, date: string, description: string }} expense
+ */
+function addExpense(expense) {
+  AppState.expenses.push(expense);
+  saveState();
+}
+
+/**
+ * Removes an expense by id from AppState and persists to localStorage.
+ * If the save fails, the expense is re-inserted at its original position.
+ *
+ * @param {string} id - The expense id to remove.
+ * @returns {boolean} `true` on success; `false` if localStorage write failed.
+ */
+function deleteExpenseById(id) {
+  const index = AppState.expenses.findIndex(e => e.id === id);
+  if (index === -1) return false;
+
+  const [removed] = AppState.expenses.splice(index, 1);
+  const ok = saveState();
+
+  if (!ok) {
+    // Restore at original position on storage failure
+    AppState.expenses.splice(index, 0, removed);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Sets the monthly budget in AppState and persists.
+ * @param {number} value
+ */
+function setBudget(value) {
+  AppState.budget = value;
+  saveState();
+}
+
+/**
+ * Adds a custom category to AppState and persists.
+ * @param {string} name
+ */
+function addCategory(name) {
+  AppState.categories.push(name.trim());
+  saveState();
+}
+
+/**
+ * Sets the active sort order in AppState and persists.
+ * @param {'amount-desc'|'amount-asc'|'category-az'} order
+ */
+function setSortOrder(order) {
+  AppState.sortOrder = order;
+  saveState();
+}
+
+/**
+ * Sets the active theme in AppState and persists.
+ * Only called when the user has explicitly toggled the theme this session.
+ * @param {'light'|'dark'} theme
+ */
+function setTheme(theme) {
+  AppState.theme = theme;
+  saveState();
+}
+
+/* ============================================================
+   RENDER HELPERS
+   ============================================================ */
+
+/**
+ * Displays an error message in an <output> element.
+ * @param {string} outputId - The id of the <output> element.
+ * @param {string} message  - The error message to display.
+ */
+function showError(outputId, message) {
+  const el = document.getElementById(outputId);
+  if (el) {
+    el.textContent = message;
+    el.classList.add('error-visible');
+  }
+}
+
+/**
+ * Clears error messages from one or more <output> elements.
+ * @param {...string} outputIds - The ids of <output> elements to clear.
+ */
+function clearErrors(...outputIds) {
+  for (const id of outputIds) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = '';
+      el.classList.remove('error-visible');
+    }
+  }
+}
+
+/* ============================================================
+   RENDER MODULE
+   ============================================================ */
+
+/**
+ * Renders the budget amount and balance to the DOM.
+ * Applies colour classes based on balance sign (Requirement 1.8).
+ * @param {typeof AppState} state
+ */
+function renderSummary(state) {
+  const balanceEl = document.getElementById('balance-amount');
+  if (!balanceEl) return;
+
+  const balance = computeBalance(state.budget, state.expenses);
+  balanceEl.textContent = formatCurrency(balance);
+
+  balanceEl.classList.remove('balance-positive', 'balance-negative');
+  if (balance > 0) {
+    balanceEl.classList.add('balance-positive');
+  } else {
+    balanceEl.classList.add('balance-negative');
+  }
+
+  // Also update any displayed budget value if present
+  const budgetDisplay = document.getElementById('budget-display-amount');
+  if (budgetDisplay) {
+    budgetDisplay.textContent = formatCurrency(state.budget);
+  }
+}
+
+/**
+ * Repopulates the category <select> with DEFAULT_CATEGORIES ∪ state.categories.
+ * Keeps the placeholder option as the first (selected) option.
+ * @param {typeof AppState} state
+ */
+function renderCategories(state) {
+  const select = document.getElementById('category-select');
+  if (!select) return;
+
+  const currentValue = select.value;
+
+  // Remove all options except the placeholder (index 0)
+  while (select.options.length > 1) {
+    select.remove(1);
+  }
+
+  const allCategories = [...DEFAULT_CATEGORIES, ...state.categories];
+
+  for (const cat of allCategories) {
+    const option = document.createElement('option');
+    option.value = cat;
+    option.textContent = cat;
+    select.appendChild(option);
+  }
+
+  // Restore previous selection if it still exists
+  if (currentValue && allCategories.includes(currentValue)) {
+    select.value = currentValue;
+  } else {
+    select.value = '';
+  }
+}
+
+/**
+ * Renders the transaction list.
+ * Shows empty-state message when no expenses exist (Requirements 3.7, 3.8).
+ * @param {typeof AppState} state
+ */
+function renderTransactions(state) {
+  const list = document.getElementById('transaction-list');
+  if (!list) return;
+
+  // Clear existing items
+  list.innerHTML = '';
+
+  if (state.expenses.length === 0) {
+    const emptyMsg = document.createElement('li');
+    emptyMsg.id = 'empty-state-msg';
+    emptyMsg.textContent = 'No transactions yet. Add an expense to get started.';
+    list.appendChild(emptyMsg);
+    return;
+  }
+
+  const sorted = sortExpenses(state.expenses, state.sortOrder);
+
+  for (const expense of sorted) {
+    const item = document.createElement('li');
+    item.dataset.id = expense.id;
+
+    // Amount
+    const amountEl = document.createElement('strong');
+    amountEl.className = 'tx-amount';
+    amountEl.textContent = formatCurrency(expense.amount);
+
+    // Category badge
+    const catEl = document.createElement('em');
+    catEl.className = 'tx-category';
+    catEl.textContent = expense.category;
+
+    // Date
+    const dateEl = document.createElement('time');
+    dateEl.className = 'tx-date';
+    dateEl.dateTime = expense.date;
+    dateEl.textContent = formatDate(expense.date);
+
+    // Description (optional)
+    const descEl = document.createElement('p');
+    descEl.className = 'tx-description';
+    descEl.textContent = expense.description || '—';
+
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn-delete';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.setAttribute('aria-label', `Delete expense: ${expense.category} ${formatCurrency(expense.amount)}`);
+    deleteBtn.dataset.id = expense.id;
+
+    item.appendChild(amountEl);
+    item.appendChild(catEl);
+    item.appendChild(dateEl);
+    item.appendChild(descEl);
+    item.appendChild(deleteBtn);
+
+    list.appendChild(item);
+  }
+
+  // Sync sort select to current state
+  const sortSelect = document.getElementById('sort-select');
+  if (sortSelect) {
+    sortSelect.value = state.sortOrder;
+  }
+}
+
+/**
+ * Master render function — calls all render sub-functions and updates the chart.
+ * This is the single re-render entry point after every state change.
+ * @param {typeof AppState} state
+ */
+function renderAll(state) {
+  renderSummary(state);
+  renderCategories(state);
+  renderTransactions(state);
+  updateChart(state.expenses);
+}
+
+/* ============================================================
+   CHART MODULE
+   ============================================================ */
+
+/** Reference to the Chart.js instance. Null until initChart() is called. */
+let pieChart = null;
+
+/**
+ * Generates n visually distinct HSL colours with equal lightness.
+ * @param {number} n - Number of colours to generate.
+ * @returns {string[]} Array of HSL colour strings.
+ */
+function generateColors(n) {
+  const colors = [];
+  for (let i = 0; i < n; i++) {
+    const hue = Math.round((i / n) * 360);
+    colors.push(`hsl(${hue}, 65%, 55%)`);
+  }
+  return colors;
+}
+
+/**
+ * Initialises the Chart.js pie chart on the #pie-chart canvas.
+ * On failure, hides the chart section and shows a fallback message.
+ * Requirements: 4.1, 4.4
+ */
+function initChart() {
+  try {
+    const canvas = document.getElementById('pie-chart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    pieChart = new Chart(ctx, {
+      type: 'pie',
+      data: {
+        labels: [],
+        datasets: [{
+          data: [],
+          backgroundColor: [],
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              padding: 16,
+              font: { size: 13 },
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                const value = context.parsed;
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                return ` ${context.label}: ${formatCurrency(value)} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.error('Chart.js initialisation failed:', err);
+    const chartSection = document.getElementById('chart-section');
+    if (chartSection) {
+      chartSection.hidden = true;
+    }
+  }
+}
+
+/**
+ * Updates the pie chart data based on current expenses.
+ * Shows/hides the empty-state message as needed.
+ * Requirements: 4.2, 4.3, 4.4, 4.5
+ *
+ * @param {Array} expenses - Current expense array from AppState.
+ */
+function updateChart(expenses) {
+  const emptyMsg = document.getElementById('chart-empty-message');
+  const canvas   = document.getElementById('pie-chart');
+
+  if (!pieChart) return;
+
+  const totals = aggregateByCategory(expenses);
+
+  if (totals.size === 0) {
+    // Show empty state
+    if (emptyMsg) emptyMsg.hidden = false;
+    if (canvas)   canvas.hidden   = true;
+    return;
+  }
+
+  // Hide empty state, show chart
+  if (emptyMsg) emptyMsg.hidden = true;
+  if (canvas)   canvas.hidden   = false;
+
+  const labels = [...totals.keys()];
+  const data   = [...totals.values()];
+  const colors = generateColors(labels.length);
+
+  pieChart.data.labels                    = labels;
+  pieChart.data.datasets[0].data          = data;
+  pieChart.data.datasets[0].backgroundColor = colors;
+  pieChart.update();
+}
+
+/* ============================================================
+   HANDLERS MODULE
+   ============================================================ */
+
+/**
+ * Handles budget form submission.
+ * Requirements: 1.2, 1.3, 1.4, 1.5
+ * @param {Event} event
+ */
+function onSetBudget(event) {
+  event.preventDefault();
+  clearErrors('budget-error');
+
+  const input = document.getElementById('budget-input');
+  const value = input ? input.value : '';
+
+  const { valid, errors } = validateBudget(value);
+
+  if (!valid) {
+    showError('budget-error', errors.budget);
+    return;
+  }
+
+  setBudget(Number(value.trim()));
+  renderAll(AppState);
+}
+
+/**
+ * Handles expense form submission.
+ * Requirements: 2.2–2.9
+ * @param {Event} event
+ */
+function onAddExpense(event) {
+  event.preventDefault();
+  clearErrors('amount-error', 'category-error', 'date-error');
+
+  const amountInput  = document.getElementById('amount-input');
+  const catSelect    = document.getElementById('category-select');
+  const dateInput    = document.getElementById('date-input');
+  const descInput    = document.getElementById('description-input');
+
+  const fields = {
+    amount:      amountInput  ? amountInput.value  : '',
+    category:    catSelect    ? catSelect.value     : '',
+    date:        dateInput    ? dateInput.value     : '',
+    description: descInput    ? descInput.value     : '',
+  };
+
+  const knownCategories = [...DEFAULT_CATEGORIES, ...AppState.categories];
+  const { valid, errors } = validateExpense(fields, knownCategories);
+
+  if (!valid) {
+    if (errors.amount)   showError('amount-error',   errors.amount);
+    if (errors.category) showError('category-error', errors.category);
+    if (errors.date)     showError('date-error',     errors.date);
+    return;
+  }
+
+  const expense = {
+    id:          crypto.randomUUID(),
+    amount:      Math.round(Number(fields.amount) * 100) / 100,
+    category:    fields.category,
+    date:        fields.date,
+    description: fields.description.trim(),
+  };
+
+  addExpense(expense);
+  renderAll(AppState);
+
+  // Reset form fields (Requirement 2.9)
+  if (amountInput)  amountInput.value  = '';
+  if (catSelect)    catSelect.value    = '';
+  if (dateInput)    dateInput.value    = '';
+  if (descInput)    descInput.value    = '';
+}
+
+/**
+ * Handles transaction delete button clicks (via event delegation on #transaction-list).
+ * Requirements: 3.3, 3.4, 3.5, 3.6
+ * @param {string} id - The expense id to delete.
+ */
+function onDeleteTransaction(id) {
+  const confirmed = window.confirm('Delete this transaction? This cannot be undone.');
+  if (!confirmed) return;
+
+  const ok = deleteExpenseById(id);
+
+  if (!ok) {
+    // Show inline error on the list container
+    const list = document.getElementById('transaction-list');
+    if (list) {
+      const errMsg = document.createElement('p');
+      errMsg.className = 'storage-error';
+      errMsg.textContent = 'Error: Could not save the deletion. Please try again.';
+      list.prepend(errMsg);
+      setTimeout(() => errMsg.remove(), 4000);
+    }
+    return;
+  }
+
+  renderAll(AppState);
+}
+
+/**
+ * Handles custom category form submission.
+ * Requirements: 5.1–5.3, 5.6, 5.7
+ * @param {Event} event
+ */
+function onAddCategory(event) {
+  event.preventDefault();
+  clearErrors('category-form-error');
+
+  const input = document.getElementById('new-category-input');
+  const name  = input ? input.value : '';
+
+  const { valid, errors } = validateCategory(name, AppState.categories);
+
+  if (!valid) {
+    showError('category-form-error', errors.category);
+    return;
+  }
+
+  addCategory(name);
+  renderCategories(AppState);
+
+  if (input) input.value = '';
+}
+
+/**
+ * Handles sort order changes.
+ * Requirements: 6.2, 6.3, 6.4
+ * @param {Event} event
+ */
+function onSortChange(event) {
+  const order = event.target.value;
+  setSortOrder(order);
+  renderTransactions(AppState);
+}
+
+/**
+ * Session flag — tracks whether the user has toggled the theme this session.
+ * Prevents writing to localStorage on load (Requirement 7.6).
+ */
+let themeToggledThisSession = false;
+
+/**
+ * Handles theme toggle button clicks.
+ * Requirements: 7.1–7.3, 7.5, 7.6
+ */
+function onThemeToggle() {
+  const newTheme = AppState.theme === 'light' ? 'dark' : 'light';
+  AppState.theme = newTheme;
+
+  themeToggledThisSession = true;
+  setTheme(newTheme); // persists to localStorage
+
+  applyTheme(newTheme);
+  updateThemeToggleLabel(newTheme);
+}
+
+/**
+ * Applies the given theme to the <html> element via data-theme attribute.
+ * @param {'light'|'dark'} theme
+ */
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+/**
+ * Updates the theme toggle button's aria-label to reflect the current state.
+ * @param {'light'|'dark'} currentTheme
+ */
+function updateThemeToggleLabel(currentTheme) {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+
+  if (currentTheme === 'dark') {
+    btn.setAttribute('aria-label', 'Switch to light theme (currently dark theme)');
+    btn.textContent = '☀️ Toggle Theme';
+  } else {
+    btn.setAttribute('aria-label', 'Switch to dark theme (currently light theme)');
+    btn.textContent = '🌙 Toggle Theme';
+  }
+}
+
+/* ============================================================
+   UTILITY FORMATTERS
+   ============================================================ */
+
+/**
+ * Formats a number as a currency string (USD-style, 2 decimal places).
+ * @param {number} value
+ * @returns {string}
+ */
+function formatCurrency(value) {
+  return '$' + value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Formats an ISO date string (YYYY-MM-DD) to a human-readable local date.
+ * @param {string} isoDate
+ * @returns {string}
+ */
+function formatDate(isoDate) {
+  if (!isoDate) return '';
+  // Append T00:00:00 to force local time interpretation
+  const d = new Date(isoDate + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+/* ============================================================
+   INIT MODULE
+   ============================================================ */
+
+/**
+ * Wires all DOM event listeners. Called once from init().
+ */
+function wireEventListeners() {
+  // Budget form
+  const budgetForm = document.getElementById('budget-form');
+  if (budgetForm) budgetForm.addEventListener('submit', onSetBudget);
+
+  // Expense form
+  const expenseForm = document.getElementById('expense-form');
+  if (expenseForm) expenseForm.addEventListener('submit', onAddExpense);
+
+  // Custom category form
+  const categoryForm = document.getElementById('category-form');
+  if (categoryForm) categoryForm.addEventListener('submit', onAddCategory);
+
+  // Sort select
+  const sortSelect = document.getElementById('sort-select');
+  if (sortSelect) sortSelect.addEventListener('change', onSortChange);
+
+  // Theme toggle
+  const themeToggle = document.getElementById('theme-toggle');
+  if (themeToggle) themeToggle.addEventListener('click', onThemeToggle);
+
+  // Delete buttons — event delegation on the transaction list
+  const txList = document.getElementById('transaction-list');
+  if (txList) {
+    txList.addEventListener('click', (event) => {
+      const btn = event.target.closest('.btn-delete');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (id) onDeleteTransaction(id);
+    });
+  }
+}
+
+/**
+ * Application entry point.
+ * Called on DOMContentLoaded.
+ * Requirements: 1.6, 1.7, 3.1, 5.4, 5.5, 6.5, 6.6, 7.4
+ */
+function init() {
+  // Apply theme BEFORE any render to prevent flash (Requirement 7.4)
+  const storedTheme = safeGetItem(KEYS.THEME, 'light');
+  const initialTheme = storedTheme || 'light';
+  applyTheme(initialTheme);
+
+  // Hydrate state from localStorage
+  const { corrupted } = loadState();
+
+  // Apply theme again from fully hydrated state (ensures consistency)
+  applyTheme(AppState.theme);
+  updateThemeToggleLabel(AppState.theme);
+
+  // Handle storage corruption (Requirement 5.5)
+  if (corrupted) {
+    const main = document.querySelector('main');
+    if (main) {
+      const banner = document.createElement('p');
+      banner.id = 'corruption-banner';
+      banner.setAttribute('role', 'alert');
+      banner.textContent =
+        'Warning: Some saved data could not be read (storage may be corrupted). ' +
+        'Please reload the page to try again.';
+      main.prepend(banner);
+    }
+
+    const expenseForm = document.getElementById('expense-form');
+    if (expenseForm) {
+      expenseForm.setAttribute('disabled', 'true');
+      for (const el of expenseForm.elements) {
+        el.disabled = true;
+      }
+    }
+  }
+
+  // Set current year in footer
+  const footerYear = document.getElementById('footer-year');
+  if (footerYear) footerYear.textContent = new Date().getFullYear();
+
+  // Initialise Chart.js
+  initChart();
+
+  // Render full UI from loaded state
+  renderAll(AppState);
+
+  // Wire all event listeners
+  wireEventListeners();
+}
+
+// Kick everything off once the DOM is fully parsed
+document.addEventListener('DOMContentLoaded', init);
