@@ -7,7 +7,7 @@ const DEFAULT_CATEGORIES = [
   'Food',
   'Transport',
   'Housing',
-  'Entertainment',
+  'Fun',
   'Healthcare',
   'Shopping',
   'Utilities',
@@ -853,7 +853,7 @@ function onAddExpense(event) {
   const amountInput  = document.getElementById('amount-input');
   const catSelect    = document.getElementById('category-select');
   const dateInput    = document.getElementById('date-input');
-  const descInput    = document.getElementById('description-input');
+  const descInput    = document.getElementById('item-name-input');
 
   const fields = {
     amount:      amountInput  ? amountInput.value  : '',
